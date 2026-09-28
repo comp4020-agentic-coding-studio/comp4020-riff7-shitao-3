@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { SlotTakenError, listRooms, moveBooking } from "../../../../lib/db";
+import { SlotTakenError, listRooms, moveBooking, promoteWaitlist } from "../../../../lib/db";
 import { bus } from "../../../../lib/events";
 import { OWNER_COOKIE } from "../../../../lib/owner";
 import { SLOTS, isBookableDate } from "../../../../lib/slots";
@@ -58,6 +58,14 @@ export const POST: APIRoute = async ({ params, request, cookies, redirect }) => 
     }
     bus.emit("cancelled", moved.previous);
     bus.emit("booking", moved.updated);
+
+    // Same promotion a plain cancel does — the old slot freed here too, so
+    // whoever's been waiting longest for it gets moved in before anyone else
+    // can grab it.
+    const promoted = promoteWaitlist(moved.previous.roomId, moved.previous.date, moved.previous.slot);
+    if (promoted) {
+      bus.emit("booking", promoted);
+    }
   } catch (error) {
     if (error instanceof SlotTakenError) {
       return redirect(`${returnTo}?error=taken${errorParam}`, 303);

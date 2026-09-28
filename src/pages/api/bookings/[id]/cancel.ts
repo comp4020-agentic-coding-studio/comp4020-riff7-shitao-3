@@ -1,5 +1,5 @@
 import type { APIRoute } from "astro";
-import { cancelBooking } from "../../../../lib/db";
+import { cancelBooking, promoteWaitlist } from "../../../../lib/db";
 import { bus } from "../../../../lib/events";
 import { OWNER_COOKIE } from "../../../../lib/owner";
 import { isBookableDate } from "../../../../lib/slots";
@@ -42,5 +42,18 @@ export const POST: APIRoute = async ({ params, request, cookies, redirect }) => 
   }
 
   bus.emit("cancelled", cancelled);
+
+  // A cancelled slot doesn't sit free if someone was already waiting for it —
+  // promote the oldest waitlist entry into a real booking before anyone else
+  // gets a chance at the now-empty cell. Broadcasting it as the ordinary
+  // "booking" event means every open tab (this one included, on its own
+  // redirect) sees the slot go straight from booked to booked-by-someone-
+  // else, with no free moment and no new event type for the frontend to
+  // learn.
+  const promoted = promoteWaitlist(cancelled.roomId, cancelled.date, cancelled.slot);
+  if (promoted) {
+    bus.emit("booking", promoted);
+  }
+
   return redirect(target, 303);
 };
