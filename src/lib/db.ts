@@ -1,10 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import { and, eq, gte, sql } from "drizzle-orm";
+import { and, asc, eq, gte, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { type Booking, type Room, bookings, rooms } from "./schema";
+import { type Booking, type Room, type WaitlistEntry, bookings, rooms, waitlist } from "./schema";
 
 // One SQLite file is the app's whole persistent state. In production
 // fly.toml points DATABASE_PATH at the machine's volume (/data), which is
@@ -154,4 +154,57 @@ export function cancelBooking(id: number, ownerToken: string): Booking | null {
     .returning()
     .all();
   return cancelled ?? null;
+}
+
+// Thrown when a browser tries to join a waitlist it's already on for this
+// exact room/date/slot — the unique constraint's own failure, surfaced the
+// same way SlotTakenError surfaces a booking collision.
+export class AlreadyWaitingError extends Error {}
+
+export function joinWaitlist(input: {
+  roomId: number;
+  date: string;
+  slot: string;
+  wantedBy: string;
+  ownerToken: string;
+}): WaitlistEntry {
+  try {
+    return db.insert(waitlist).values(input).returning().get();
+  } catch (error) {
+    const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+    if (code === "SQLITE_CONSTRAINT_UNIQUE") {
+      throw new AlreadyWaitingError(`already waiting for ${input.slot} on ${input.date}`);
+    }
+    throw error;
+  }
+}
+
+// Called right after a slot frees up. FIFO by createdAt: the first name to
+// join this exact room/date/slot's waitlist gets the slot, no polling and no
+// race — this runs in the same synchronous, single-threaded call as the
+// cancellation that freed the slot, so nobody else can book it in between.
+// Returns the new booking so the caller can broadcast it, or null if nobody
+// was waiting.
+export function promoteWaitlist(roomId: number, date: string, slot: string): Booking | null {
+  const next = db
+    .select()
+    .from(waitlist)
+    .where(and(eq(waitlist.roomId, roomId), eq(waitlist.date, date), eq(waitlist.slot, slot)))
+    .orderBy(asc(waitlist.createdAt), asc(waitlist.id))
+    .get();
+  if (!next) return null;
+
+  db.delete(waitlist).where(eq(waitlist.id, next.id)).run();
+
+  return db
+    .insert(bookings)
+    .values({
+      roomId: next.roomId,
+      date: next.date,
+      slot: next.slot,
+      bookedBy: next.wantedBy,
+      ownerToken: next.ownerToken,
+    })
+    .returning()
+    .get();
 }
