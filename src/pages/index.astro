@@ -61,6 +61,7 @@ const error = Astro.url.searchParams.get("error");
       {error === "taken" && <p role="alert">Someone booked that slot just before you did — pick another.</p>}
       {error === "missing" && <p role="alert">Name, room and slot are all required.</p>}
       {error === "date" && <p role="alert">That date isn't bookable — pick one within the next two weeks.</p>}
+      {error === "waiting" && <p role="alert">You're already on the waitlist for that slot.</p>}
       <nav aria-label="date">
         {canGoPrev ? (
           <a href={`/?date=${prevDate}`}>&larr; {prevDate}</a>
@@ -97,10 +98,27 @@ const error = Astro.url.searchParams.get("error");
                       {booking ? (
                         <div class="booked">
                           <span>Booked — {booking.bookedBy}</span>
-                          {myToken && booking.ownerToken === myToken && (
+                          {myToken && booking.ownerToken === myToken ? (
                             <form method="post" action={`/api/bookings/${booking.id}/cancel`}>
                               <input type="hidden" name="date" value={date} />
                               <button type="submit">Cancel</button>
+                            </form>
+                          ) : (
+                            <form method="post" action="/api/waitlist" class="waitlist-form">
+                              <input type="hidden" name="roomId" value={room.id} />
+                              <input type="hidden" name="date" value={date} />
+                              <input type="hidden" name="slot" value={slot} />
+                              <label for={`wait-${cellId}`} class="sr-only">
+                                Your name, to be notified if {room.name} at {slot} frees up
+                              </label>
+                              <input
+                                id={`wait-${cellId}`}
+                                name="wantedBy"
+                                placeholder="Name"
+                                required
+                                maxlength="80"
+                              />
+                              <button type="submit">Join waitlist</button>
                             </form>
                           )}
                         </div>
@@ -136,8 +154,11 @@ const error = Astro.url.searchParams.get("error");
         const cell = document.querySelector(
           `td[data-room="${booking.roomId}"][data-slot="${booking.slot}"]`,
         );
-        const form = cell?.querySelector("form");
-        if (!form) return; // already booked (or not today) in this tab
+        // A cell already showing "Booked" (own cancel button or someone
+        // else's waitlist form) means this tab already knows — a waitlist
+        // promotion for a slot this tab never saw go free would otherwise
+        // stomp on a cell that isn't actually stale.
+        if (!cell || cell.querySelector(".booked")) return;
         const div = document.createElement("div");
         div.className = "booked";
         const span = document.createElement("span");
@@ -161,7 +182,10 @@ const error = Astro.url.searchParams.get("error");
         const cell = document.querySelector(
           `td[data-room="${booking.roomId}"][data-slot="${booking.slot}"]`,
         );
-        if (!cell || cell.querySelector("form")) return; // already free in this tab
+        // A free cell's booking form is a direct child of the td; a booked
+        // cell's cancel/waitlist form is nested inside its ".booked" div —
+        // so ":scope > form" is what "already free in this tab" actually means.
+        if (!cell || cell.querySelector(":scope > form")) return; // already free in this tab
         const roomName = cell.closest("tr")?.querySelector("th")?.textContent ?? "this room";
         const cellId = `${booking.roomId}-${booking.slot}`;
 

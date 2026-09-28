@@ -112,6 +112,14 @@ td form input {
   border: 1px solid #a30000;
 }
 
+.waitlist-form button {
+  padding: 0.15rem 0.5rem;
+  font-size: 0.75rem;
+  color: #1a4b8c;
+  background: none;
+  border: 1px solid #1a4b8c;
+}
+
 [role="alert"] {
   font-weight: 600;
   color: #a30000;
