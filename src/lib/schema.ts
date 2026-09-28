@@ -41,5 +41,29 @@ export const bookings = sqliteTable(
   (table) => [unique().on(table.roomId, table.date, table.slot)],
 );
 
+// A slot that's already taken can still take a name here instead of turning
+// someone away — the moment the booking holding that slot is cancelled, the
+// oldest waiting name is promoted straight into a real booking, over the
+// same SSE stream. `createdAt` orders that promotion FIFO; the unique
+// constraint stops one browser piling onto the same slot's waitlist twice.
+export const waitlist = sqliteTable(
+  "waitlist",
+  {
+    id: int().primaryKey({ autoIncrement: true }),
+    roomId: int("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    date: text().notNull(),
+    slot: text().notNull(),
+    wantedBy: text("wanted_by").notNull(),
+    ownerToken: text("owner_token").notNull(),
+    createdAt: text("created_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [unique().on(table.roomId, table.date, table.slot, table.ownerToken)],
+);
+
 export type Room = typeof rooms.$inferSelect;
 export type Booking = typeof bookings.$inferSelect;
+export type WaitlistEntry = typeof waitlist.$inferSelect;
